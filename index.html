@@ -25,7 +25,7 @@
 <body>
 
   <div id="ui">
-    <h3>⛏️ 2D Minecraft (礦洞探險版)</h3>
+    <h3>⛏️ 2D Minecraft (修復出生摔死 + 食物回血)</h3>
     <div id="health-bar">❤️❤️❤️❤️❤️❤️❤️❤️❤️❤️</div>
   </div>
 
@@ -36,6 +36,8 @@
     <div class="slot" id="slot-4" style="background: #3498db;" onclick="selectBlock(4, 9)">4</div>
     <div class="slot" id="slot-5" style="background: #e74c3c;" onclick="selectBlock(5, 11)">T</div>
     <div class="slot" id="slot-6" style="background: #95a5a6; border-color: #bdc3c7; font-size: 20px;" onclick="selectBlock(6, 12)">🗡️</div>
+    <!-- 新增：蘋果食物槽 -->
+    <div class="slot" id="slot-7" style="background: #c0392b; border-color: #e74c3c; font-size: 20px;" onclick="selectBlock(7, 13)">🍎</div>
   </div>
 
   <div id="btn-left" class="mobile-btn">◀</div>
@@ -54,28 +56,37 @@
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    const TILE_SIZE = 40; 
-    const WORLD_COLS = 500; 
-    const WORLD_ROWS = 150; 
+    const TILE_SIZE = 40; const WORLD_COLS = 500; const WORLD_ROWS = 150; 
     const AIR = 0; const DIRT = 1; const GRASS = 2; const STONE = 3; 
     const WOOD = 4; const LEAVES = 5; const COAL = 6; const GOLD = 7; 
-    const DIAMOND = 8; const WATER = 9; const TNT = 11; const SWORD = 12; 
+    const DIAMOND = 8; const WATER = 9; const TNT = 11; const SWORD = 12; const APPLE = 13;
 
-    let world = [];
-    let currentBlock = DIRT; 
-    let activeTNTs = []; 
-    let zombies = [];
-    let actionMode = 'mine'; 
+    let world = []; let currentBlock = DIRT; let activeTNTs = []; 
+    let zombies = []; let actionMode = 'mine'; 
 
     let player = {
-      x: (WORLD_COLS * TILE_SIZE) / 2, y: 0, width: 24, height: 36,
+      x: 0, y: 0, width: 24, height: 36,
       vx: 0, vy: 0, speed: 5, jumpPower: -10, gravity: 0.5, grounded: false, facing: 'right',
       hp: 10, maxHp: 10, invulnerable: 0, fallStart: 0, isAttacking: 0 
     };
 
-    const camera = { x: 0, y: 0 };
-    const keys = { a: false, d: false, w: false };
+    const camera = { x: 0, y: 0 }; const keys = { a: false, d: false, w: false };
     let frameCount = 0;
+
+    // --- 安全出生點函數 (修復一進遊戲摔死的 Bug) ---
+    function safeSpawnPlayer() {
+      let spawnGridX = Math.floor(WORLD_COLS / 2);
+      player.x = spawnGridX * TILE_SIZE;
+      player.vx = 0; player.vy = 0; player.fallStart = 0;
+      
+      // 從頂部往下掃描，找到第一塊實心方塊，將玩家放置在上面
+      for (let y = 0; y < WORLD_ROWS; y++) {
+        if (world[spawnGridX][y] !== AIR && world[spawnGridX][y] !== WATER) {
+          player.y = y * TILE_SIZE - player.height;
+          break;
+        }
+      }
+    }
 
     // --- 世界生成與洞穴礦脈 ---
     function generateWorld() {
@@ -93,50 +104,39 @@
         }
       }
 
-      // 蟲洞演算法生成洞穴
       for (let i = 0; i < 150; i++) {
-        let currentX = Math.floor(Math.random() * WORLD_COLS);
-        let currentY = Math.floor(Math.random() * (WORLD_ROWS - 30)) + 30; 
-        let caveLength = Math.floor(Math.random() * 60) + 20; 
-        for (let j = 0; j < caveLength; j++) {
-          const brushSize = Math.random() < 0.2 ? 2 : 1; 
-          for (let cx = -brushSize; cx <= brushSize; cx++) {
-            for (let cy = -brushSize; cy <= brushSize; cy++) {
-              let carveX = currentX + cx; let carveY = currentY + cy;
+        let cx = Math.floor(Math.random() * WORLD_COLS);
+        let cy = Math.floor(Math.random() * (WORLD_ROWS - 30)) + 30; 
+        let caveLen = Math.floor(Math.random() * 60) + 20; 
+        for (let j = 0; j < caveLen; j++) {
+          const bs = Math.random() < 0.2 ? 2 : 1; 
+          for (let tx = -bs; tx <= bs; tx++) {
+            for (let ty = -bs; ty <= bs; ty++) {
+              let carveX = cx + tx; let carveY = cy + ty;
               if (carveX >= 0 && carveX < WORLD_COLS && carveY >= 0 && carveY < WORLD_ROWS) {
-                if (world[carveX][carveY] === STONE || world[carveX][carveY] === DIRT) {
-                  world[carveX][carveY] = AIR;
-                }
+                if (world[carveX][carveY] === STONE || world[carveX][carveY] === DIRT) world[carveX][carveY] = AIR;
               }
             }
           }
-          currentX += Math.floor(Math.random() * 3) - 1; 
-          currentY += Math.floor(Math.random() * 3) - 1; 
+          cx += Math.floor(Math.random() * 3) - 1; cy += Math.floor(Math.random() * 3) - 1; 
         }
       }
 
-      // 生成礦物與水脈
-      function generateOre(type, numVeins, maxVeinSize, minDepth, maxDepth) {
-        for (let i = 0; i < numVeins; i++) {
+      function genOre(type, num, maxV, minD, maxD) {
+        for (let i = 0; i < num; i++) {
           let cx = Math.floor(Math.random() * WORLD_COLS);
-          let cy = Math.floor(Math.random() * (maxDepth - minDepth)) + minDepth;
-          let size = Math.floor(Math.random() * maxVeinSize) + 1;
+          let cy = Math.floor(Math.random() * (maxD - minD)) + minD;
+          let size = Math.floor(Math.random() * maxV) + 1;
           for (let j = 0; j < size; j++) {
             if (cx >= 0 && cx < WORLD_COLS && cy >= 0 && cy < WORLD_ROWS) {
-              if (world[cx][cy] === STONE || (type === WATER && world[cx][cy] === AIR)) {
-                world[cx][cy] = type;
-              }
+              if (world[cx][cy] === STONE || (type === WATER && world[cx][cy] === AIR)) world[cx][cy] = type;
             }
-            cx += Math.floor(Math.random() * 3) - 1;
-            cy += Math.floor(Math.random() * 3) - 1;
+            cx += Math.floor(Math.random() * 3) - 1; cy += Math.floor(Math.random() * 3) - 1;
           }
         }
       }
-
-      generateOre(COAL, 300, 8, 20, WORLD_ROWS);
-      generateOre(GOLD, 150, 5, 50, WORLD_ROWS);
-      generateOre(DIAMOND, 80, 3, 100, WORLD_ROWS);
-      generateOre(WATER, 80, 15, 40, WORLD_ROWS); 
+      genOre(COAL, 300, 8, 20, WORLD_ROWS); genOre(GOLD, 150, 5, 50, WORLD_ROWS);
+      genOre(DIAMOND, 80, 3, 100, WORLD_ROWS); genOre(WATER, 80, 15, 40, WORLD_ROWS); 
     }
 
     function spawnZombies() {
@@ -148,33 +148,24 @@
     }
 
     function saveGame() {
-      const saveData = { world: world, playerX: player.x, playerY: player.y, hp: player.hp };
-      localStorage.setItem('mc2d_save', JSON.stringify(saveData));
+      localStorage.setItem('mc2d_save', JSON.stringify({ world: world, playerX: player.x, playerY: player.y, hp: player.hp }));
       alert("遊戲已儲存！");
     }
 
     function loadGame() {
       const saved = localStorage.getItem('mc2d_save');
       if (saved) {
-        const data = JSON.parse(saved);
-        world = data.world; player.x = data.playerX; player.y = data.playerY; player.hp = data.hp;
-        spawnZombies();
+        const data = JSON.parse(saved); world = data.world; player.x = data.playerX; player.y = data.playerY; player.hp = data.hp; spawnZombies();
       } else {
-        generateWorld(); spawnZombies();
+        generateWorld(); safeSpawnPlayer(); player.hp = player.maxHp; spawnZombies();
       }
       updateHealthUI();
     }
     
     function resetGame() {
       if (confirm("確定要重置世界嗎？這會產生全新的地形並覆蓋存檔。")) {
-        localStorage.removeItem('mc2d_save');
-        player.hp = player.maxHp;
-        player.x = (WORLD_COLS * TILE_SIZE) / 2;
-        player.y = 0;
-        generateWorld();
-        spawnZombies();
-        saveGame();
-        updateHealthUI();
+        localStorage.removeItem('mc2d_save'); 
+        generateWorld(); safeSpawnPlayer(); player.hp = player.maxHp; spawnZombies(); saveGame(); updateHealthUI();
       }
     }
 
@@ -184,35 +175,40 @@
       document.getElementById('health-bar').innerText = hearts;
       if (player.hp <= 0) {
         alert("你死掉了！重置位置與血量。");
-        player.hp = player.maxHp; player.x = (WORLD_COLS * TILE_SIZE) / 2; player.y = 0;
-        updateHealthUI();
+        player.hp = player.maxHp; safeSpawnPlayer(); updateHealthUI();
       }
     }
 
     function takeDamage(amount) {
       if (player.invulnerable <= 0) {
-        player.hp -= amount; player.invulnerable = 30; player.vy = -5; 
+        player.hp -= amount; player.invulnerable = 30; player.vy = -5; updateHealthUI();
+      }
+    }
+
+    // --- 吃東西補血 ---
+    function triggerEat() {
+      if (player.hp < player.maxHp) {
+        player.hp += 2; // 吃一顆蘋果補 2 點血 (1 顆心)
+        if (player.hp > player.maxHp) player.hp = player.maxHp;
         updateHealthUI();
+        
+        // 給一點簡單的吃東西回饋效果 (微小跳躍)
+        player.vy = -3;
       }
     }
 
     function triggerAttack() {
       if (player.isAttacking > 0) return; 
       player.isAttacking = 15; 
-      
       let range = 50; 
       let hx1 = player.facing === 'right' ? player.x + player.width : player.x - range;
       let hx2 = player.facing === 'right' ? player.x + player.width + range : player.x;
-      let hy1 = player.y - 20;
-      let hy2 = player.y + player.height + 20;
+      let hy1 = player.y - 20; let hy2 = player.y + player.height + 20;
 
       for (let i = zombies.length - 1; i >= 0; i--) {
         let z = zombies[i];
         if (z.x < hx2 && z.x + z.width > hx1 && z.y < hy2 && z.y + z.height > hy1) {
-          z.hp -= 1;
-          z.stun = 20; 
-          z.vx = player.facing === 'right' ? 8 : -8; 
-          z.vy = -4; 
+          z.hp -= 1; z.stun = 20; z.vx = player.facing === 'right' ? 8 : -8; z.vy = -4; 
           if (z.hp <= 0) zombies.splice(i, 1); 
         }
       }
@@ -222,12 +218,13 @@
       document.querySelectorAll('.slot').forEach(el => el.classList.remove('active'));
       document.getElementById('slot-' + slotId).classList.add('active');
       currentBlock = blockId;
-
       const btnAction = document.getElementById('btn-action');
-      if (blockId === SWORD) {
+      if (blockId === SWORD) { 
         actionMode = 'attack'; btnAction.innerHTML = '🗡️<br>攻擊'; btnAction.style.background = 'rgba(155, 89, 182, 0.6)'; 
-      } else {
-        actionMode = 'mine'; btnAction.innerHTML = '⛏️<br>挖礦'; btnAction.style.background = 'rgba(231, 76, 60, 0.6)';
+      } else if (blockId === APPLE) {
+        actionMode = 'eat'; btnAction.innerHTML = '🍎<br>吃'; btnAction.style.background = 'rgba(230, 126, 34, 0.6)'; 
+      } else { 
+        actionMode = 'mine'; btnAction.innerHTML = '⛏️<br>挖礦'; btnAction.style.background = 'rgba(231, 76, 60, 0.6)'; 
       }
     }
 
@@ -242,14 +239,16 @@
     btnAction.addEventListener('touchstart', (e) => {
       e.preventDefault();
       if (actionMode === 'attack') triggerAttack();
+      else if (actionMode === 'eat') triggerEat();
       else if (actionMode === 'mine') { actionMode = 'place'; btnAction.innerHTML = '🧱<br>放置'; btnAction.style.background = 'rgba(46, 204, 113, 0.6)'; } 
       else { actionMode = 'mine'; btnAction.innerHTML = '⛏️<br>挖礦'; btnAction.style.background = 'rgba(231, 76, 60, 0.6)'; }
     }, {passive: false});
 
     canvas.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-      if(e.touches[0].target !== canvas) return;
+      e.preventDefault(); if(e.touches[0].target !== canvas) return;
       if (actionMode === 'attack') { triggerAttack(); return; }
+      if (actionMode === 'eat') { triggerEat(); return; }
+      
       const worldX = e.touches[0].clientX + camera.x; const worldY = e.touches[0].clientY + camera.y;
       const gridX = Math.floor(worldX / TILE_SIZE); const gridY = Math.floor(worldY / TILE_SIZE);
       if (gridX >= 0 && gridX < WORLD_COLS && gridY >= 0 && gridY < WORLD_ROWS) {
@@ -263,12 +262,14 @@
 
     window.addEventListener('keydown', (e) => { 
       if(e.key==='a')keys.a=true; if(e.key==='d')keys.d=true; if(e.key==='w'||e.key===' ')keys.w=true; 
-      if(e.key==='6') selectBlock(6, 12);
+      if(e.key==='6') selectBlock(6, 12); if(e.key==='7') selectBlock(7, 13);
     });
     window.addEventListener('keyup', (e) => { if(e.key==='a')keys.a=false; if(e.key==='d')keys.d=false; if(e.key==='w'||e.key===' ')keys.w=false; });
     
     canvas.addEventListener('mousedown', (e) => {
       if (currentBlock === SWORD) { triggerAttack(); return; }
+      if (currentBlock === APPLE) { triggerEat(); return; }
+      
       const worldX = e.clientX + camera.x; const worldY = e.clientY + camera.y;
       const gridX = Math.floor(worldX / TILE_SIZE); const gridY = Math.floor(worldY / TILE_SIZE);
       if (gridX >= 0 && gridX < WORLD_COLS && gridY >= 0 && gridY < WORLD_ROWS) {
@@ -289,8 +290,7 @@
 
     function applyPhysics(entity, isPlayer) {
       entity.vy += entity.gravity; entity.x += entity.vx;
-      if (entity.x < 0) entity.x = 0;
-      if (entity.x + entity.width > WORLD_COLS * TILE_SIZE) entity.x = WORLD_COLS * TILE_SIZE - entity.width;
+      if (entity.x < 0) entity.x = 0; if (entity.x + entity.width > WORLD_COLS * TILE_SIZE) entity.x = WORLD_COLS * TILE_SIZE - entity.width;
 
       if (entity.vx > 0) {
         if (isSolid(entity.x + entity.width, entity.y) || isSolid(entity.x + entity.width, entity.y + entity.height - 1)) {
@@ -304,8 +304,7 @@
         }
       }
 
-      entity.y += entity.vy;
-      let wasGrounded = entity.grounded; entity.grounded = false;
+      entity.y += entity.vy; let wasGrounded = entity.grounded; entity.grounded = false;
       
       if (entity.vy > 0) {
         if (!wasGrounded && isPlayer && entity.fallStart === 0) entity.fallStart = entity.y; 
@@ -315,8 +314,7 @@
             let fallDist = (entity.y - entity.fallStart) / TILE_SIZE;
             if (fallDist > 5) takeDamage(Math.floor(fallDist - 4));
           }
-          entity.vy = 0; entity.grounded = true;
-          if (isPlayer) entity.fallStart = 0;
+          entity.vy = 0; entity.grounded = true; if (isPlayer) entity.fallStart = 0;
         }
       } else if (entity.vy < 0) {
         if (isSolid(entity.x, entity.y) || isSolid(entity.x + entity.width - 1, entity.y)) {
@@ -329,6 +327,28 @@
       frameCount++;
       if (player.invulnerable > 0) player.invulnerable--;
       if (player.isAttacking > 0) player.isAttacking--;
+
+      if (frameCount % 5 === 0) {
+        for (let x = 0; x < WORLD_COLS; x++) {
+          for (let y = WORLD_ROWS - 2; y >= 0; y--) { 
+            if (world[x][y] === WATER) {
+              if (world[x][y+1] === AIR) { 
+                world[x][y+1] = WATER; world[x][y] = AIR;
+              } else if (world[x][y+1] !== WATER && world[x][y+1] !== AIR) {
+                let leftAir = (x > 0 && world[x-1][y] === AIR);
+                let rightAir = (x < WORLD_COLS - 1 && world[x+1][y] === AIR);
+                if (leftAir && rightAir) {
+                  world[Math.random() < 0.5 ? x-1 : x+1][y] = WATER; world[x][y] = AIR; 
+                } else if (leftAir) {
+                  world[x-1][y] = WATER; world[x][y] = AIR;
+                } else if (rightAir) {
+                  world[x+1][y] = WATER; world[x][y] = AIR;
+                }
+              }
+            }
+          }
+        }
+      }
 
       for (let i = activeTNTs.length - 1; i >= 0; i--) {
         let tnt = activeTNTs[i]; tnt.timer--;
@@ -345,47 +365,36 @@
           let pGridX = Math.floor(player.x/TILE_SIZE); let pGridY = Math.floor(player.y/TILE_SIZE);
           let dist = Math.sqrt(Math.pow(pGridX - tnt.x, 2) + Math.pow(pGridY - tnt.y, 2));
           if (dist <= r) takeDamage(4);
-          activeTNTs.splice(i, 1);
-          camera.x += (Math.random() - 0.5) * 40; camera.y += (Math.random() - 0.5) * 40;
+          activeTNTs.splice(i, 1); camera.x += (Math.random() - 0.5) * 40; camera.y += (Math.random() - 0.5) * 40;
         }
       }
 
-      if (keys.a) { player.vx = -player.speed; player.facing = 'left'; } 
-      else if (keys.d) { player.vx = player.speed; player.facing = 'right'; } 
-      else { player.vx = 0; }
+      if (keys.a) { player.vx = -player.speed; player.facing = 'left'; } else if (keys.d) { player.vx = player.speed; player.facing = 'right'; } else { player.vx = 0; }
       if (keys.w && player.grounded) { player.vy = player.jumpPower; player.grounded = false; }
       
       applyPhysics(player, true);
 
       for (let z of zombies) {
-        if (z.stun > 0) {
-          z.stun--; 
-        } else {
+        if (z.stun > 0) z.stun--; 
+        else {
           let dist = player.x - z.x;
           if (Math.abs(dist) < 400 && Math.abs(player.y - z.y) < 200) { 
-            z.vx = dist > 0 ? z.speed : -z.speed;
-            z.facing = dist > 0 ? 'right' : 'left';
+            z.vx = dist > 0 ? z.speed : -z.speed; z.facing = dist > 0 ? 'right' : 'left';
             if (Math.abs(dist) < 20 && Math.abs(player.y - z.y) < 30) takeDamage(1);
-          } else {
-            z.vx = 0;
-          }
+          } else z.vx = 0;
         }
         applyPhysics(z, false);
       }
 
       if (frameCount % 1800 === 0) saveGame();
 
-      camera.x = player.x + player.width / 2 - canvas.width / 2;
-      camera.y = player.y + player.height / 2 - canvas.height / 2;
-      if (camera.x < 0) camera.x = 0;
-      if (camera.x > WORLD_COLS * TILE_SIZE - canvas.width) camera.x = WORLD_COLS * TILE_SIZE - canvas.width;
-      if (camera.y < 0) camera.y = 0;
-      if (camera.y > WORLD_ROWS * TILE_SIZE - canvas.height) camera.y = WORLD_ROWS * TILE_SIZE - canvas.height;
+      camera.x = player.x + player.width / 2 - canvas.width / 2; camera.y = player.y + player.height / 2 - canvas.height / 2;
+      if (camera.x < 0) camera.x = 0; if (camera.x > WORLD_COLS * TILE_SIZE - canvas.width) camera.x = WORLD_COLS * TILE_SIZE - canvas.width;
+      if (camera.y < 0) camera.y = 0; if (camera.y > WORLD_ROWS * TILE_SIZE - canvas.height) camera.y = WORLD_ROWS * TILE_SIZE - canvas.height;
     }
 
     function drawEntity(entity, isZombie) {
-      ctx.save();
-      ctx.translate(entity.x - camera.x + entity.width / 2, entity.y - camera.y + entity.height / 2);
+      ctx.save(); ctx.translate(entity.x - camera.x + entity.width / 2, entity.y - camera.y + entity.height / 2);
       if (entity.facing === 'left') ctx.scale(-1, 1);
       
       let px = -12; let py = -18; 
@@ -395,11 +404,9 @@
         if (entity.stun > 0 && Math.floor(frameCount / 3) % 2 === 0) ctx.globalAlpha = 0.5; 
         ctx.fillStyle = '#1e824c'; ctx.fillRect(px+12 - swing, py+12, 6, 5); ctx.fillRect(px+12 - swing, py+17, 6, 7); 
         ctx.fillStyle = '#2980b9'; ctx.fillRect(px+12 + swing, py+24, 6, 9); ctx.fillRect(px+12 + swing, py+33, 6, 3); 
-        ctx.fillStyle = '#00BFFF'; ctx.fillRect(px+6, py+12, 12, 12); 
-        ctx.fillStyle = '#2ecc71'; ctx.fillRect(px+5, py, 14, 12); 
+        ctx.fillStyle = '#00BFFF'; ctx.fillRect(px+6, py+12, 12, 12); ctx.fillStyle = '#2ecc71'; ctx.fillRect(px+5, py, 14, 12); 
         ctx.fillStyle = 'black'; ctx.fillRect(px+14, py+4, 2, 2); 
-        ctx.fillStyle = '#1e824c'; ctx.fillRect(px+6 - swing, py+24, 6, 9); 
-        ctx.fillStyle = '#27ae60'; ctx.fillRect(px+6 + swing, py+12, 6, 5); ctx.fillRect(px+6 + swing, py+17, 6, 7); 
+        ctx.fillStyle = '#1e824c'; ctx.fillRect(px+6 - swing, py+24, 6, 9); ctx.fillStyle = '#27ae60'; ctx.fillRect(px+6 + swing, py+12, 6, 5); ctx.fillRect(px+6 + swing, py+17, 6, 7); 
       } else { 
         if (player.invulnerable > 0 && Math.floor(frameCount / 5) % 2 === 0) ctx.globalAlpha = 0.5; 
         ctx.fillStyle = '#0097a7'; ctx.fillRect(px+12 - swing, py+12, 6, 5); ctx.fillStyle = '#d3a86c'; ctx.fillRect(px+12 - swing, py+17, 6, 7); 
@@ -411,13 +418,16 @@
         ctx.fillStyle = '#00BFFF'; ctx.fillRect(px+6 + swing, py+12, 6, 5); ctx.fillStyle = '#F1C27D'; ctx.fillRect(px+6 + swing, py+17, 6, 7); 
         
         if (currentBlock === SWORD) {
-          ctx.save();
-          ctx.translate(px + 9 + swing, py + 22); 
+          ctx.save(); ctx.translate(px + 9 + swing, py + 22); 
           if (player.isAttacking > 0) ctx.rotate(-Math.PI / 4 + Math.PI * (1 - player.isAttacking / 15)); 
           else ctx.rotate(-Math.PI / 4);
-          ctx.fillStyle = '#bdc3c7'; ctx.fillRect(-2, -22, 4, 22); 
-          ctx.fillStyle = '#8B4513'; ctx.fillRect(-6, -2, 12, 4); 
-          ctx.fillRect(-2, 2, 4, 6); 
+          ctx.fillStyle = '#bdc3c7'; ctx.fillRect(-2, -22, 4, 22); ctx.fillStyle = '#8B4513'; ctx.fillRect(-6, -2, 12, 4); ctx.fillRect(-2, 2, 4, 6); 
+          ctx.restore();
+        } else if (currentBlock === APPLE) {
+          // 手上拿蘋果的顯示
+          ctx.save(); ctx.translate(px + 9 + swing, py + 22);
+          ctx.fillStyle = '#c0392b'; ctx.beginPath(); ctx.arc(0, -10, 6, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#27ae60'; ctx.fillRect(0, -18, 2, 4); // 蘋果梗
           ctx.restore();
         }
       }
@@ -431,15 +441,12 @@
 
       for (let x = startCol; x < endCol; x++) {
         for (let y = startRow; y < endRow; y++) {
-          let block = world[x][y];
-          if (block === AIR) continue;
+          let block = world[x][y]; if (block === AIR) continue;
           const screenX = x * TILE_SIZE - camera.x; const screenY = y * TILE_SIZE - camera.y;
 
-          if (block === GRASS) ctx.fillStyle = '#2ecc71'; 
-          else if (block === DIRT) ctx.fillStyle = '#8B4513'; 
+          if (block === GRASS) ctx.fillStyle = '#2ecc71'; else if (block === DIRT) ctx.fillStyle = '#8B4513'; 
           else if (block === STONE || block === COAL || block === GOLD || block === DIAMOND) ctx.fillStyle = '#7f8c8d'; 
-          else if (block === WOOD) ctx.fillStyle = '#5c4033';
-          else if (block === WATER) ctx.fillStyle = 'rgba(52, 152, 219, 0.7)';
+          else if (block === WOOD) ctx.fillStyle = '#5c4033'; else if (block === WATER) ctx.fillStyle = 'rgba(52, 152, 219, 0.7)';
           
           if (block !== TNT) {
             ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
@@ -448,8 +455,7 @@
             if (block === DIAMOND) { ctx.fillStyle = '#00ffff'; ctx.fillRect(screenX + 12, screenY + 12, 16, 16); }
             ctx.strokeStyle = 'rgba(0,0,0,0.1)'; ctx.strokeRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
           } else {
-            ctx.fillStyle = '#e74c3c'; ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE); 
-            ctx.fillStyle = '#ecf0f1'; ctx.fillRect(screenX, screenY + 12, TILE_SIZE, 16); 
+            ctx.fillStyle = '#e74c3c'; ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE); ctx.fillStyle = '#ecf0f1'; ctx.fillRect(screenX, screenY + 12, TILE_SIZE, 16); 
             ctx.fillStyle = 'black'; ctx.font = 'bold 12px sans-serif'; ctx.fillText('TNT', screenX + 6, screenY + 24); 
           }
         }
@@ -457,10 +463,8 @@
 
       for (let tnt of activeTNTs) {
         const screenX = tnt.x * TILE_SIZE - camera.x; const screenY = tnt.y * TILE_SIZE - camera.y;
-        ctx.fillStyle = (Math.floor(frameCount / 5) % 2 === 0) ? '#ffffff' : '#e74c3c'; 
-        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+        ctx.fillStyle = (Math.floor(frameCount / 5) % 2 === 0) ? '#ffffff' : '#e74c3c'; ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
       }
-
       for (let z of zombies) drawEntity(z, true);
       drawEntity(player, false);
     }
