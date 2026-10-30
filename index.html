@@ -25,7 +25,7 @@
 <body>
 
   <div id="ui">
-    <h3>⛏️ 2D Minecraft (修復出生摔死 + 食物回血)</h3>
+    <h3>⛏️ 2D Minecraft (無敵防摔版)</h3>
     <div id="health-bar">❤️❤️❤️❤️❤️❤️❤️❤️❤️❤️</div>
   </div>
 
@@ -36,7 +36,6 @@
     <div class="slot" id="slot-4" style="background: #3498db;" onclick="selectBlock(4, 9)">4</div>
     <div class="slot" id="slot-5" style="background: #e74c3c;" onclick="selectBlock(5, 11)">T</div>
     <div class="slot" id="slot-6" style="background: #95a5a6; border-color: #bdc3c7; font-size: 20px;" onclick="selectBlock(6, 12)">🗡️</div>
-    <!-- 新增：蘋果食物槽 -->
     <div class="slot" id="slot-7" style="background: #c0392b; border-color: #e74c3c; font-size: 20px;" onclick="selectBlock(7, 13)">🍎</div>
   </div>
 
@@ -45,7 +44,7 @@
   <div id="btn-jump" class="mobile-btn">▲</div>
   <div id="btn-action" class="mobile-btn">⛏️<br>挖礦</div>
   
-  <button id="btn-save" onclick="saveGame()">💾 存檔</button>
+  <button id="btn-save" onclick="saveGame(false)">💾 存檔</button>
   <button id="btn-reset" onclick="resetGame()">🗑️ 重置</button>
 
   <canvas id="gameCanvas"></canvas>
@@ -73,22 +72,22 @@
     const camera = { x: 0, y: 0 }; const keys = { a: false, d: false, w: false };
     let frameCount = 0;
 
-    // --- 安全出生點函數 (修復一進遊戲摔死的 Bug) ---
     function safeSpawnPlayer() {
       let spawnGridX = Math.floor(WORLD_COLS / 2);
       player.x = spawnGridX * TILE_SIZE;
       player.vx = 0; player.vy = 0; player.fallStart = 0;
+      player.invulnerable = 150; // 重生給予 2.5 秒無敵，免疫一切落地傷害
       
-      // 從頂部往下掃描，找到第一塊實心方塊，將玩家放置在上面
+      let found = false;
       for (let y = 0; y < WORLD_ROWS; y++) {
         if (world[spawnGridX][y] !== AIR && world[spawnGridX][y] !== WATER) {
           player.y = y * TILE_SIZE - player.height;
-          break;
+          found = true; break;
         }
       }
+      if (!found) player.y = 0;
     }
 
-    // --- 世界生成與洞穴礦脈 ---
     function generateWorld() {
       let terrainHeight = Math.floor(WORLD_ROWS / 4); 
       for (let x = 0; x < WORLD_COLS; x++) {
@@ -113,7 +112,8 @@
           for (let tx = -bs; tx <= bs; tx++) {
             for (let ty = -bs; ty <= bs; ty++) {
               let carveX = cx + tx; let carveY = cy + ty;
-              if (carveX >= 0 && carveX < WORLD_COLS && carveY >= 0 && carveY < WORLD_ROWS) {
+              // 避免挖空最底層導致掉出世界
+              if (carveX >= 0 && carveX < WORLD_COLS && carveY >= 0 && carveY < WORLD_ROWS - 5) {
                 if (world[carveX][carveY] === STONE || world[carveX][carveY] === DIRT) world[carveX][carveY] = AIR;
               }
             }
@@ -124,8 +124,7 @@
 
       function genOre(type, num, maxV, minD, maxD) {
         for (let i = 0; i < num; i++) {
-          let cx = Math.floor(Math.random() * WORLD_COLS);
-          let cy = Math.floor(Math.random() * (maxD - minD)) + minD;
+          let cx = Math.floor(Math.random() * WORLD_COLS); let cy = Math.floor(Math.random() * (maxD - minD)) + minD;
           let size = Math.floor(Math.random() * maxV) + 1;
           for (let j = 0; j < size; j++) {
             if (cx >= 0 && cx < WORLD_COLS && cy >= 0 && cy < WORLD_ROWS) {
@@ -147,9 +146,9 @@
       }
     }
 
-    function saveGame() {
+    function saveGame(showMsg = true) {
       localStorage.setItem('mc2d_save', JSON.stringify({ world: world, playerX: player.x, playerY: player.y, hp: player.hp }));
-      alert("遊戲已儲存！");
+      if (showMsg) alert("遊戲已儲存！");
     }
 
     function loadGame() {
@@ -159,13 +158,14 @@
       } else {
         generateWorld(); safeSpawnPlayer(); player.hp = player.maxHp; spawnZombies();
       }
+      player.invulnerable = 150; // 讀檔進來直接給無敵，徹底免疫開場落雷摔死
       updateHealthUI();
     }
     
     function resetGame() {
       if (confirm("確定要重置世界嗎？這會產生全新的地形並覆蓋存檔。")) {
         localStorage.removeItem('mc2d_save'); 
-        generateWorld(); safeSpawnPlayer(); player.hp = player.maxHp; spawnZombies(); saveGame(); updateHealthUI();
+        generateWorld(); safeSpawnPlayer(); player.hp = player.maxHp; spawnZombies(); saveGame(false); updateHealthUI();
       }
     }
 
@@ -175,7 +175,10 @@
       document.getElementById('health-bar').innerText = hearts;
       if (player.hp <= 0) {
         alert("你死掉了！重置位置與血量。");
-        player.hp = player.maxHp; safeSpawnPlayer(); updateHealthUI();
+        player.hp = player.maxHp; 
+        safeSpawnPlayer(); 
+        updateHealthUI();
+        saveGame(false); // 死亡後立刻靜默存檔覆蓋掉錯誤的半空紀錄
       }
     }
 
@@ -185,15 +188,10 @@
       }
     }
 
-    // --- 吃東西補血 ---
     function triggerEat() {
       if (player.hp < player.maxHp) {
-        player.hp += 2; // 吃一顆蘋果補 2 點血 (1 顆心)
-        if (player.hp > player.maxHp) player.hp = player.maxHp;
-        updateHealthUI();
-        
-        // 給一點簡單的吃東西回饋效果 (微小跳躍)
-        player.vy = -3;
+        player.hp += 2; if (player.hp > player.maxHp) player.hp = player.maxHp;
+        updateHealthUI(); player.vy = -3;
       }
     }
 
@@ -201,8 +199,7 @@
       if (player.isAttacking > 0) return; 
       player.isAttacking = 15; 
       let range = 50; 
-      let hx1 = player.facing === 'right' ? player.x + player.width : player.x - range;
-      let hx2 = player.facing === 'right' ? player.x + player.width + range : player.x;
+      let hx1 = player.facing === 'right' ? player.x + player.width : player.x - range; let hx2 = player.facing === 'right' ? player.x + player.width + range : player.x;
       let hy1 = player.y - 20; let hy2 = player.y + player.height + 20;
 
       for (let i = zombies.length - 1; i >= 0; i--) {
@@ -219,13 +216,9 @@
       document.getElementById('slot-' + slotId).classList.add('active');
       currentBlock = blockId;
       const btnAction = document.getElementById('btn-action');
-      if (blockId === SWORD) { 
-        actionMode = 'attack'; btnAction.innerHTML = '🗡️<br>攻擊'; btnAction.style.background = 'rgba(155, 89, 182, 0.6)'; 
-      } else if (blockId === APPLE) {
-        actionMode = 'eat'; btnAction.innerHTML = '🍎<br>吃'; btnAction.style.background = 'rgba(230, 126, 34, 0.6)'; 
-      } else { 
-        actionMode = 'mine'; btnAction.innerHTML = '⛏️<br>挖礦'; btnAction.style.background = 'rgba(231, 76, 60, 0.6)'; 
-      }
+      if (blockId === SWORD) { actionMode = 'attack'; btnAction.innerHTML = '🗡️<br>攻擊'; btnAction.style.background = 'rgba(155, 89, 182, 0.6)'; } 
+      else if (blockId === APPLE) { actionMode = 'eat'; btnAction.innerHTML = '🍎<br>吃'; btnAction.style.background = 'rgba(230, 126, 34, 0.6)'; } 
+      else { actionMode = 'mine'; btnAction.innerHTML = '⛏️<br>挖礦'; btnAction.style.background = 'rgba(231, 76, 60, 0.6)'; }
     }
 
     document.getElementById('btn-left').addEventListener('touchstart', (e) => { e.preventDefault(); keys.a = true; }, {passive: false});
@@ -238,16 +231,14 @@
     const btnAction = document.getElementById('btn-action');
     btnAction.addEventListener('touchstart', (e) => {
       e.preventDefault();
-      if (actionMode === 'attack') triggerAttack();
-      else if (actionMode === 'eat') triggerEat();
+      if (actionMode === 'attack') triggerAttack(); else if (actionMode === 'eat') triggerEat();
       else if (actionMode === 'mine') { actionMode = 'place'; btnAction.innerHTML = '🧱<br>放置'; btnAction.style.background = 'rgba(46, 204, 113, 0.6)'; } 
       else { actionMode = 'mine'; btnAction.innerHTML = '⛏️<br>挖礦'; btnAction.style.background = 'rgba(231, 76, 60, 0.6)'; }
     }, {passive: false});
 
     canvas.addEventListener('touchstart', (e) => {
       e.preventDefault(); if(e.touches[0].target !== canvas) return;
-      if (actionMode === 'attack') { triggerAttack(); return; }
-      if (actionMode === 'eat') { triggerEat(); return; }
+      if (actionMode === 'attack') { triggerAttack(); return; } if (actionMode === 'eat') { triggerEat(); return; }
       
       const worldX = e.touches[0].clientX + camera.x; const worldY = e.touches[0].clientY + camera.y;
       const gridX = Math.floor(worldX / TILE_SIZE); const gridY = Math.floor(worldY / TILE_SIZE);
@@ -260,16 +251,11 @@
       }
     }, {passive: false});
 
-    window.addEventListener('keydown', (e) => { 
-      if(e.key==='a')keys.a=true; if(e.key==='d')keys.d=true; if(e.key==='w'||e.key===' ')keys.w=true; 
-      if(e.key==='6') selectBlock(6, 12); if(e.key==='7') selectBlock(7, 13);
-    });
+    window.addEventListener('keydown', (e) => { if(e.key==='a')keys.a=true; if(e.key==='d')keys.d=true; if(e.key==='w'||e.key===' ')keys.w=true; if(e.key==='6') selectBlock(6, 12); if(e.key==='7') selectBlock(7, 13); });
     window.addEventListener('keyup', (e) => { if(e.key==='a')keys.a=false; if(e.key==='d')keys.d=false; if(e.key==='w'||e.key===' ')keys.w=false; });
     
     canvas.addEventListener('mousedown', (e) => {
-      if (currentBlock === SWORD) { triggerAttack(); return; }
-      if (currentBlock === APPLE) { triggerEat(); return; }
-      
+      if (currentBlock === SWORD) { triggerAttack(); return; } if (currentBlock === APPLE) { triggerEat(); return; }
       const worldX = e.clientX + camera.x; const worldY = e.clientY + camera.y;
       const gridX = Math.floor(worldX / TILE_SIZE); const gridY = Math.floor(worldY / TILE_SIZE);
       if (gridX >= 0 && gridX < WORLD_COLS && gridY >= 0 && gridY < WORLD_ROWS) {
@@ -335,15 +321,9 @@
               if (world[x][y+1] === AIR) { 
                 world[x][y+1] = WATER; world[x][y] = AIR;
               } else if (world[x][y+1] !== WATER && world[x][y+1] !== AIR) {
-                let leftAir = (x > 0 && world[x-1][y] === AIR);
-                let rightAir = (x < WORLD_COLS - 1 && world[x+1][y] === AIR);
-                if (leftAir && rightAir) {
-                  world[Math.random() < 0.5 ? x-1 : x+1][y] = WATER; world[x][y] = AIR; 
-                } else if (leftAir) {
-                  world[x-1][y] = WATER; world[x][y] = AIR;
-                } else if (rightAir) {
-                  world[x+1][y] = WATER; world[x][y] = AIR;
-                }
+                let leftAir = (x > 0 && world[x-1][y] === AIR); let rightAir = (x < WORLD_COLS - 1 && world[x+1][y] === AIR);
+                if (leftAir && rightAir) { world[Math.random() < 0.5 ? x-1 : x+1][y] = WATER; world[x][y] = AIR; } 
+                else if (leftAir) { world[x-1][y] = WATER; world[x][y] = AIR; } else if (rightAir) { world[x+1][y] = WATER; world[x][y] = AIR; }
               }
             }
           }
@@ -386,7 +366,7 @@
         applyPhysics(z, false);
       }
 
-      if (frameCount % 1800 === 0) saveGame();
+      if (frameCount % 1800 === 0) saveGame(false);
 
       camera.x = player.x + player.width / 2 - canvas.width / 2; camera.y = player.y + player.height / 2 - canvas.height / 2;
       if (camera.x < 0) camera.x = 0; if (camera.x > WORLD_COLS * TILE_SIZE - canvas.width) camera.x = WORLD_COLS * TILE_SIZE - canvas.width;
@@ -424,10 +404,9 @@
           ctx.fillStyle = '#bdc3c7'; ctx.fillRect(-2, -22, 4, 22); ctx.fillStyle = '#8B4513'; ctx.fillRect(-6, -2, 12, 4); ctx.fillRect(-2, 2, 4, 6); 
           ctx.restore();
         } else if (currentBlock === APPLE) {
-          // 手上拿蘋果的顯示
           ctx.save(); ctx.translate(px + 9 + swing, py + 22);
           ctx.fillStyle = '#c0392b'; ctx.beginPath(); ctx.arc(0, -10, 6, 0, Math.PI * 2); ctx.fill();
-          ctx.fillStyle = '#27ae60'; ctx.fillRect(0, -18, 2, 4); // 蘋果梗
+          ctx.fillStyle = '#27ae60'; ctx.fillRect(0, -18, 2, 4); 
           ctx.restore();
         }
       }
